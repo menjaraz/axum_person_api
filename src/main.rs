@@ -1,17 +1,20 @@
-use std::error::Error;
-use std::sync::Arc;
+use std::{error::Error, sync::Arc};
 
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{async_trait, Json, Router};
+use async_trait::async_trait;
+use axum::{
+    extract::{rejection::JsonRejection, Path, Query, State},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use axum_extra::extract::WithRejection;
 use chrono::NaiveDate;
-use hyper::StatusCode;
+use http::StatusCode;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::{PgDatabaseError, PgPoolOptions};
-use sqlx::{Pool, Postgres};
+use sqlx::{
+    postgres::{PgDatabaseError, PgPoolOptions},
+    Pool, Postgres,
+};
 
 #[derive(Debug, Deserialize, Serialize, Default, sqlx::FromRow)]
 struct Person {
@@ -173,12 +176,10 @@ impl PostgresPersonRepository {
                 .into();
             }
         }
-        // TODO: log error
         RepositoryError::Unexpected.into()
     }
 
     fn handle_unexpected_error(_err: sqlx::Error) -> AppError {
-        // TODO: log error
         RepositoryError::Unexpected.into()
     }
 }
@@ -216,7 +217,7 @@ impl PersonRepository for PostgresPersonRepository {
             Err(err) => Err(Self::handle_unexpected_error(err)),
         }
     }
-    // TODO: performance
+
     async fn search_person(&self, term: String) -> Result<Vec<Person>, AppError> {
         let search_term = format!("%{term}%");
 
@@ -246,7 +247,6 @@ impl PersonRepository for PostgresPersonRepository {
 }
 
 type DynPersonRepo = Arc<dyn PersonRepository + Send + Sync>;
-
 type JsonBody<T> = WithRejection<Json<T>, AppError>;
 
 async fn get_person(
@@ -280,29 +280,19 @@ async fn count_person(State(repo): State<DynPersonRepo>) -> Result<String, AppEr
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // TODO: log + tracing using trace
-
-    println!("Connecting to database");
     let conn_string = "postgres://person:person@localhost:5432/person";
     let pool = PgPoolOptions::new().connect(conn_string).await?;
     let repo: DynPersonRepo = Arc::new(PostgresPersonRepository::new(pool));
-
-    println!("Starting server");
 
     let app = Router::new()
         .route("/pessoas/:id", get(get_person))
         .route("/pessoas", post(create_person))
         .route("/pessoas", get(search_person))
         .route("/contagem-pessoas", get(count_person))
-        .with_state(repo)
-        .into_make_service();
+        .with_state(repo);
 
-    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
-        .serve(app)
-        .await
-        .expect("Failed to start service");
-
-    println!("Server started");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
